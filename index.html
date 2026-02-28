@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Transport Dashboard – Live Occupancy & GPS</title>
+
+<!-- Fonts and Chart.js -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<!-- Leaflet.js for map -->
+<link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+
+<style>
+body{margin:0;font-family:'Poppins',sans-serif;background:#121212;color:#fff;}
+header{padding:20px;text-align:center;background:linear-gradient(90deg,#00f5ff,#00ff87);color:#000;font-weight:700;}
+header h1{margin-bottom:5px;font-size:2rem;}
+header p{font-weight:400;font-size:0.9rem;color:#222;}
+.container{display:grid;grid-template-columns:1fr 1fr;gap:20px;padding:20px;}
+.card{background:rgba(255,255,255,0.05);padding:15px;border-radius:15px;backdrop-filter:blur(8px);box-shadow:0 4px 20px rgba(0,255,200,0.2);}
+.card h2{margin-bottom:10px;color:#00ffcc;}
+button{padding:8px 15px;border:none;border-radius:20px;background:linear-gradient(90deg,#00f5ff,#00ff87);color:#000;font-weight:600;cursor:pointer;margin-top:10px;transition:0.3s;}
+button:hover{transform:scale(1.05);}
+#map{height:400px;border-radius:15px;}
+.status{padding:5px 10px;border-radius:50px;font-size:0.8rem;}
+.safe{background:#00c853;}
+.medium{background:#ffab00;}
+.high{background:#d50000;}
+ul{list-style:none;padding-left:10px;max-height:150px;overflow-y:auto;}
+.alert{margin-bottom:5px;}
+.heat-bar{height:15px;width:100%;border-radius:12px;background:#333;overflow:hidden;margin-top:5px;}
+.heat-fill{height:100%;width:0%;transition:width 0.5s;}
+input, select{padding:8px 12px;border-radius:12px;border:none;margin-top:8px;width:100%;}
+@media(max-width:900px){.container{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+
+<header>
+<h1>AI Transport Dashboard – Live Occupancy & GPS</h1>
+<p>Real-time bus occupancy, GPS tracking, alerts & predictive AI</p>
+</header>
+
+<div class="container">
+
+<!-- Vehicle Occupancy -->
+<div class="card">
+<h2>Vehicle Occupancy Status</h2>
+<select id="vehicleSelect">
+<option value="bus1">Bus 1</option>
+<option value="bus2">Bus 2</option>
+<option value="train1">Train 1</option>
+<option value="train2">Train 2</option>
+</select>
+<div class="metric" id="vehicleLoad">0%</div>
+<div id="vehicleStatus" class="status safe">Safe</div>
+<div class="heat-bar"><div id="vehicleHeat" class="heat-fill"></div></div>
+<button onclick="simulateVehicleLoad()">Update Occupancy</button>
+</div>
+
+<!-- Map with GPS -->
+<div class="card">
+<h2>Live GPS Vehicle Tracking</h2>
+<div id="map"></div>
+<button onclick="simulateMapMovement()">Simulate GPS Movement</button>
+</div>
+
+<!-- Next Stop Prediction -->
+<div class="card">
+<h2>Next Stop Prediction</h2>
+<p id="nextStopPrediction">Predicting next stop load...</p>
+<button onclick="predictNextStop()">Predict Next Stop</button>
+</div>
+
+<!-- AI Rerouting Suggestions -->
+<div class="card">
+<h2>AI Rerouting Suggestions</h2>
+<p id="rerouteSuggestion">No reroute suggested yet.</p>
+<button onclick="simulateReroute()">Simulate Reroute</button>
+</div>
+
+<!-- Alerts -->
+<div class="card">
+<h2>System Alerts</h2>
+<ul id="alerts"></ul>
+<button onclick="clearAlerts()">Clear Alerts</button>
+<button onclick="exportAlerts()">Export Alerts CSV</button>
+</div>
+
+<!-- Forecast Chart -->
+<div class="card" style="grid-column: span 2;">
+<h2>Passenger Forecast (Next 6 Hours)</h2>
+<canvas id="forecastChart"></canvas>
+<button onclick="exportForecast()">Export Forecast CSV</button>
+</div>
+
+<!-- Search Vehicle -->
+<div class="card">
+<h2>Search Vehicle/Route Load</h2>
+<input type="text" id="routeInput" placeholder="Enter Route (e.g., Bus 1)">
+<button onclick="searchRouteLoad()">Check Load</button>
+<p id="routeLoadResult"></p>
+</div>
+
+</div>
+
+<script>
+// === Vehicles State ===
+let vehicles = {
+    bus1:  { load: 40, lat: 13.0827, lng: 80.2707, delay: 0 },  // Central Chennai
+    bus2:  { load: 60, lat: 13.0674, lng: 80.2376, delay: 1 },  // T. Nagar area
+    train1:{ load: 80, lat: 13.0604, lng: 80.2496, delay: 2 },  // Nungambakkam
+    train2:{ load: 30, lat: 13.1143, lng: 80.2848, delay: 0 }   // Anna Nagar
+};
+
+const maxCapacity = 100;
+let alertsData = [];
+
+// === Map Setup ===
+let map = L.map('map').setView([ 21.0000,78.0000],13);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19}).addTo(map);
+let markers = {};
+for(const v in vehicles){
+  let color = vehicles[v].load<60?"green":vehicles[v].load<90?"orange":"red";
+  markers[v] = L.circleMarker([vehicles[v].lat,vehicles[v].lng],{radius:10,color:color,fillOpacity:0.8}).addTo(map).bindPopup(`${v} | ${vehicles[v].load}% occupancy`);
+}
+
+// === Utility Functions ===
+function getHeatColor(percent){if(percent<60) return "#00c853"; else if(percent<90) return "#ffab00"; else return "#d50000";}
+function addAlert(msg){alertsData.push(msg); const li=document.createElement("li"); li.innerText=msg; li.className="alert"; document.getElementById("alerts").appendChild(li);}
+function clearAlerts(){alertsData=[];document.getElementById("alerts").innerHTML="";}
+
+// === Vehicle Load Simulation ===
+function simulateVehicleLoad(){
+  const vehicle=document.getElementById("vehicleSelect").value;
+  // Simulate random occupancy
+  vehicles[vehicle].load=Math.floor(Math.random()*120);
+  document.getElementById("vehicleLoad").innerText=vehicles[vehicle].load + "%";
+  const status=document.getElementById("vehicleStatus");
+  const heat=document.getElementById("vehicleHeat");
+  let percent=Math.min((vehicles[vehicle].load/maxCapacity)*100,100);
+  heat.style.width=percent+"%"; heat.style.background=getHeatColor(percent);
+
+  // Status and alerts
+  if(vehicles[vehicle].load<60){status.innerText="Safe";status.className="status safe";}
+  else if(vehicles[vehicle].load<90){status.innerText="Moderate";status.className="status medium"; addAlert(`${vehicle} moderate occupancy`);}
+  else{status.innerText="Overloaded";status.className="status high"; addAlert(`🚨 ${vehicle} overcrowded!`);}
+  // Peak hour detection simulation
+  let now=new Date(); if(now.getHours()>=7 && now.getHours()<=9 || now.getHours()>=17 && now.getHours()<=19){addAlert(`⚡ Peak hour detected! Extra monitoring required.`);}
+
+  // Bus delay alert
+  if(vehicles[vehicle].delay>1){addAlert(`⏱ ${vehicle} delay: ${vehicles[vehicle].delay} min`);}
+
+  // Update map marker
+  let color = getHeatColor(percent);
+  markers[vehicle].setStyle({color:color}).bindPopup(`${vehicle} | ${vehicles[vehicle].load}% occupancy | Delay: ${vehicles[vehicle].delay} min`);
+}
+
+// === Map Movement Simulation ===
+function simulateMapMovement(){
+  for(const v in vehicles){
+    vehicles[v].lat+= (Math.random()-0.5)*0.005;
+    vehicles[v].lng+= (Math.random()-0.5)*0.005;
+    markers[v].setLatLng([vehicles[v].lat,vehicles[v].lng]);
+  }
+  addAlert("🔄 GPS positions updated");
+}
+
+// === Next Stop Prediction ===
+function predictNextStop(){
+  const stops=["Central","Main Street","Airport","Downtown","University"];
+  const stop=stops[Math.floor(Math.random()*stops.length)];
+  const load=Math.floor(Math.random()*120);
+  const waitTime=Math.floor(load/10)+1;
+  document.getElementById("nextStopPrediction").innerText=`Next Stop: ${stop} | Predicted Load: ${load}% | Wait: ${waitTime} min`;
+  addAlert(`📍 ${stop} predicted load: ${load}%, wait: ${waitTime} min`);
+}
+
+// === AI Rerouting ===
+function simulateReroute(){
+  const routes=["Route A (Balanced Load)","Route B (Extra Vehicle Added)","Route C (Low Traffic Alternative)"];
+  const suggestion = routes[Math.floor(Math.random()*routes.length)];
+  document.getElementById("rerouteSuggestion").innerText=suggestion;
+  addAlert(`🔄 AI Reroute Suggested: ${suggestion}`);
+}
+
+// === Search Route ===
+function searchRouteLoad(){
+  const route=document.getElementById("routeInput").value.toLowerCase();
+  let load;
+  if(route.includes("bus1")) load=vehicles.bus1.load;
+  else if(route.includes("bus2")) load=vehicles.bus2.load;
+  else if(route.includes("train1")) load=vehicles.train1.load;
+  else if(route.includes("train2")) load=vehicles.train2.load;
+  else{document.getElementById("routeLoadResult").innerText="Route not found"; return;}
+  document.getElementById("routeLoadResult").innerText=`${route.toUpperCase()} current occupancy: ${load}%`;
+}
+
+// === Forecast Chart ===
+const ctx=document.getElementById('forecastChart').getContext('2d');
+let forecastChart=new Chart(ctx,{type:'line',data:{labels:['1 Hr','2 Hr','3 Hr','4 Hr','5 Hr','6 Hr'],datasets:[
+{label:'Bus 1',data:[45,70,85,95,60,50],borderColor:'#00ffcc',backgroundColor:'rgba(0,255,200,0.2)',fill:true,tension:0.4},
+{label:'Bus 2',data:[30,50,60,70,65,55],borderColor:'#ffab00',backgroundColor:'rgba(255,171,0,0.2)',fill:true,tension:0.4},
+{label:'Train 1',data:[80,90,100,95,85,70],borderColor:'#d50000',backgroundColor:'rgba(213,0,0,0.2)',fill:true,tension:0.4}
+]},options:{plugins:{legend:{labels:{color:'#fff'}}},scales:{x:{ticks:{color:'#fff'}},y:{ticks:{color:'#fff'}}}}});
+
+// === Export Functions ===
+function exportAlerts(){let csv="Alert\n"+alertsData.join("\n"); let blob=new Blob([csv],{type:"text/csv"}); let a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="alerts.csv"; a.click();}
+function exportForecast(){let csv="Time,Bus 1,Bus 2,Train 1\n"; const labels=forecastChart.data.labels; for(let i=0;i<labels.length;i++){csv+=labels[i]+","; forecastChart.data.datasets.forEach(ds=>{csv+=ds.data[i]+","}); csv+="\n";} let blob=new Blob([csv],{type:"text/csv"}); let a=document.createElement("a"); a.href=URL.createObjectURL(blob); a.download="forecast.csv"; a.click();}
+</script>
+
+</body>
+</html>

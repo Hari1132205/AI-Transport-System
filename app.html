@@ -1,0 +1,189 @@
+import React, { useEffect, useMemo, useState } from "react";
+import axios from "axios";
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer
+} from "recharts";
+
+type RouteType = {
+  id: number;
+  name: string;
+  predicted_demand: number;
+  capacity: number;
+};
+
+const API_BASE = "http://localhost:8000";
+
+const App: React.FC = () => {
+  const [data, setData] = useState<RouteType[]>([]);
+  const [threshold, setThreshold] = useState<number>(0.85);
+  const [loading, setLoading] = useState<boolean>(false);
+  const [error, setError] = useState<string>("");
+  const [page, setPage] = useState<number>(1);
+  const pageSize = 5;
+
+  const fetchPredictions = async () => {
+    try {
+      setLoading(true);
+      setError("");
+      const response = await axios.get(`${API_BASE}/predictions`);
+      setData(response.data);
+    } catch (err) {
+      console.warn("API failed, using mock data.");
+      setData([
+        { id: 1, name: "Route A", predicted_demand: 60, capacity: 50 },
+        { id: 2, name: "Route B", predicted_demand: 40, capacity: 50 },
+        { id: 3, name: "Route C", predicted_demand: 80, capacity: 70 },
+        { id: 4, name: "Route D", predicted_demand: 30, capacity: 60 },
+        { id: 5, name: "Route E", predicted_demand: 55, capacity: 55 },
+        { id: 6, name: "Route F", predicted_demand: 90, capacity: 75 }
+      ]);
+      setError("Backend not connected. Showing mock data.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPredictions();
+    const interval = setInterval(fetchPredictions, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const processedData = useMemo(() => {
+    return data.map((r) => ({
+      ...r,
+      ratio: r.predicted_demand / r.capacity
+    }));
+  }, [data]);
+
+  const paginated = processedData.slice(
+    (page - 1) * pageSize,
+    page * pageSize
+  );
+
+  const totalPages = Math.ceil(processedData.length / pageSize);
+
+  const overloaded = processedData.filter(
+    (r) => r.predicted_demand > r.capacity
+  );
+
+  return (
+    <div className="p-6 min-h-screen bg-gray-100">
+      <h1 className="text-3xl font-bold mb-4">
+        AI Predictive Public Transport Load Balancing
+      </h1>
+
+      {loading && <p className="text-blue-600">Loading...</p>}
+      {error && <p className="text-red-600">{error}</p>}
+
+      {/* Threshold Control */}
+      <div className="bg-white p-4 rounded shadow mb-4">
+        <h2 className="font-semibold mb-2">
+          Overload Threshold: {threshold.toFixed(2)}
+        </h2>
+        <input
+          type="range"
+          min="0.5"
+          max="1.2"
+          step="0.05"
+          value={threshold}
+          onChange={(e) => setThreshold(parseFloat(e.target.value))}
+          className="w-full"
+        />
+      </div>
+
+      {/* Chart */}
+      <div className="bg-white p-4 rounded shadow mb-4">
+        <h2 className="text-xl font-semibold mb-2">Load Trend</h2>
+        <ResponsiveContainer width="100%" height={300}>
+          <LineChart data={processedData}>
+            <XAxis dataKey="name" />
+            <YAxis />
+            <Tooltip />
+            <Line
+              type="monotone"
+              dataKey="predicted_demand"
+              stroke="#6366f1"
+            />
+          </LineChart>
+        </ResponsiveContainer>
+      </div>
+
+      {/* Route Table */}
+      <div className="bg-white p-4 rounded shadow mb-4">
+        <h2 className="text-xl font-semibold mb-2">Route Status</h2>
+        <table className="w-full text-left">
+          <thead>
+            <tr className="bg-gray-200">
+              <th className="p-2">Route</th>
+              <th>Predicted</th>
+              <th>Capacity</th>
+              <th>Load Ratio</th>
+            </tr>
+          </thead>
+          <tbody>
+            {paginated.map((r) => (
+              <tr
+                key={r.id}
+                className={
+                  r.ratio > 1
+                    ? "bg-red-200"
+                    : r.ratio > threshold
+                    ? "bg-yellow-200"
+                    : "bg-green-100"
+                }
+              >
+                <td className="p-2">{r.name}</td>
+                <td>{r.predicted_demand}</td>
+                <td>{r.capacity}</td>
+                <td>{r.ratio.toFixed(2)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+
+        {/* Pagination */}
+        <div className="flex justify-between mt-3">
+          <button
+            disabled={page === 1}
+            onClick={() => setPage(page - 1)}
+            className="px-3 py-1 bg-blue-500 text-white rounded disabled:bg-gray-300"
+          >
+            Prev
+          </button>
+          <span>
+            {page} / {totalPages || 1}
+          </span>
+          <button
+            disabled={page === totalPages || totalPages === 0}
+            onClick={() => setPage(page + 1)}
+            className="px-3 py-1 bg-blue-500 text-white rounded disabled:bg-gray-300"
+          >
+            Next
+          </button>
+        </div>
+      </div>
+
+      {/* Recommendations */}
+      <div className="bg-white p-4 rounded shadow">
+        <h2 className="text-xl font-semibold mb-2">AI Recommendations</h2>
+        {overloaded.length === 0 ? (
+          <p className="text-green-600">No overload predicted.</p>
+        ) : (
+          overloaded.map((r) => (
+            <div
+              key={r.id}
+              className="p-2 bg-red-100 rounded mb-2"
+            >
+              🚍 Add extra vehicle to {r.name}
+            </div>
+          ))
+        )}
+      </div>
+    </div>
+  
